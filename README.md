@@ -10,7 +10,7 @@ The most widely used, high-performance Minecraft server that aims to fix gamepla
 **Support and Project Discussion:**
 - [Our forums](https://forums.papermc.io/) or [Discord](https://discord.gg/papermc)
 
-How To (Server Admins)
+如何使用(Server Admins)
 ------
 Paperclip is a jar file that you can download and run just like a normal jar file.
 
