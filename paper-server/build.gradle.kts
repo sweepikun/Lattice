@@ -14,12 +14,91 @@ plugins {
     id("io.papermc.fill.gradle") version "1.0.7"
 }
 
+// Paper maven url must be defined before repositories block
 val paperMavenPublicUrl = "https://repo.papermc.io/repository/maven-public/"
+
+// Add repositories to resolve native-lib-loader on JitPack
+repositories {
+    mavenCentral()
+    maven {
+        url = uri(paperMavenPublicUrl)
+    }
+    maven("https://jitpack.io")
+    // mvnrepository page for the artifact (added per request). Note: mvnrepository is an index site, not a binary repo,
+    // but add the common Maven Central URL explicitly as well.
+    maven {
+        url = uri("https://repo.maven.apache.org/maven2/")
+    }
+}
+
+val nativeDir = "${projectDir}/native"
+// Native library configuration
+val nativeBuildDir = "${nativeDir}/build"
+val nativeLibsDir = "${nativeBuildDir}/libs"
+val resourcesDir = "src/main/resources"
+
+tasks {
+    val generateJniHeaders by registering(JavaCompile::class) {
+        // Include both NativeCompression and its dependencies for header generation
+        setSource(files(
+            "src/main/java/io/lattice/network/NativeCompression.java",
+            "src/main/java/io/lattice/config/LatticeConfig.java"
+        ))
+        // Add only the minimal dependencies needed for YamlConfiguration
+        classpath = configurations.compileClasspath.get().filter { file ->
+            file.name.contains("spigot-api") || file.name.contains("bukkit")
+        }
+        destinationDirectory.set(file("${nativeBuildDir}/generated/jni"))
+        options.compilerArgs.addAll(listOf("-h", "${nativeBuildDir}/generated/jni"))
+        options.encoding = "UTF-8"
+    }
+
+    val configureCMake by registering(Exec::class) {
+        workingDir = file(nativeBuildDir)
+        val jniIncludeDirs = "${System.getProperty("java.home")}/include," +
+                            "${System.getProperty("java.home")}/include/win32"
+        
+        commandLine(
+            "cmake", "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DJNI_INCLUDE_DIRS=$jniIncludeDirs",
+            nativeDir
+        )
+
+        dependsOn(generateJniHeaders)
+        inputs.dir(nativeDir)
+        outputs.dir(nativeBuildDir)
+    }
+
+    val buildNative by registering(Exec::class) {
+        workingDir = file(nativeBuildDir)
+        commandLine("cmake", "--build", ".")
+
+        dependsOn(configureCMake)
+        inputs.dir(nativeDir)
+        outputs.dir(nativeLibsDir)
+    }
+
+    val copyNativeLib by registering(Copy::class) {
+        from(nativeLibsDir)
+        into("${resourcesDir}/native/windows-x64")
+        include("*.dll", "*.so", "*.dylib")
+        
+        dependsOn(buildNative)
+    }
+
+    named("processResources") {
+        dependsOn(copyNativeLib)
+    }
+}
 
 dependencies {
     mache("io.papermc:mache:1.21.8+build.2")
     paperclip("io.papermc:paperclip:3.0.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    
+    // Add native-lib-loader as a runtime dependency only
+    runtimeOnly("com.github.zhanhb:native-lib-loader:2.3.6")
 }
 
 paperweight {

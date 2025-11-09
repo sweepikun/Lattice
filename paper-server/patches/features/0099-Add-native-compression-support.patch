@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice <lattice@example.com>
+Date: Fri, 1 Jan 2024 00:00:00 +0000
+Subject: [PATCH] Add native compression support to network stack
+
+
+diff --git a/paper-server/src/main/java/net/minecraft/network/Connection.java b/paper-server/src/main/java/net/minecraft/network/Connection.java
+index xxxxxxx..xxxxxxx 100644
+--- a/paper-server/src/main/java/net/minecraft/network/Connection.java
++++ b/paper-server/src/main/java/net/minecraft/network/Connection.java
+@@ -6,6 +6,8 @@
+ import io.netty.channel.ChannelPipeline;
+ import io.netty.handler.timeout.TimeoutException;
+ import io.papermc.paper.network.ConnectionEvent;
++import io.lattice.network.compression.NativeCompressionManager;
++
+ import java.util.Queue;
+ import java.util.concurrent.ConcurrentLinkedQueue;
+ import org.slf4j.Logger;
+@@ -177,9 +179,20 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         ChannelPipeline pipeline = this.channel.pipeline();
+ 
+-        if (i >= 0) {
+-            pipeline.addBefore("decoder", "decompress", new CompressionDecoder(i));
+-            pipeline.addBefore("encoder", "compress", new CompressionEncoder(i));
++        try {
++            // Try to use native compression first
++            if (i >= 0) {
++                NativeCompressionManager.setCompressionThreshold(this, i);
++            } else {
++                if (pipeline.get("decompress") != null) {
++                    pipeline.remove("decompress");
++                }
++                if (pipeline.get("compress") != null) {
++                    pipeline.remove("compress");
++                }
++            }
++        } catch (Throwable t) {
++            LOGGER.warn("Failed to initialize native compression, falling back to vanilla", t);
++            // Fallback to vanilla compression
++            if (i >= 0) {
++                NativeCompressionManager.enableVanillaCompression(this, i);
++            }
++        }
+ 
+         this.fireEvent(i >= 0 ? ConnectionEvent.COMPRESSION_THRESHOLD_SET 
+                              : ConnectionEvent.COMPRESSION_DISABLED);
+     }
+
+@@ -817,6 +832,15 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     }
+ 
++    public void setCompressionLevel(int level) {
++        try {
++            NativeCompressionManager.setCompressionLevel(level);
++        } catch (Throwable t) {
++            LOGGER.warn("Failed to update native compression level", t);
++            // No fallback needed - vanilla compression level is already set in constructor
++        }
++    }
++    
+     static {
+         atExitHook = false;
+     }

@@ -1,0 +1,189 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice Team <lattice@example.com>
+Date: Thu, 1 Jan 2025 00:00:00 +0000
+Subject: [PATCH] Integrate Lattice optimizations into Paper core
+
+Integrates Lattice optimizations into the Paper core by modifying key classes:
+1. Connection - Adds native compression support with fallback
+2. LevelLightEngine - Adds native light engine with fallback
+3. ChunkSerializer - Adds optimized chunk serialization with fallback
+
+Each optimization is controlled by a configuration option in lattice.yml and
+falls back to vanilla behavior if the native implementation fails.
+
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000000 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -595,6 +595,43 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+         }
+     }
+ 
++    // Lattice start - add native compression support
++    public void setupCompression(int threshold, boolean validateDecompressed) {
++        // Try to use Lattice native compression if enabled
++        if (io.lattice.config.LatticeConfig.isPacketCompressionOptimizationEnabled()) {
++            try {
++                if (threshold >= 0) {
++                    io.lattice.network.compression.NativeCompressionManager.setCompressionThreshold(this, threshold);
++                } else {
++                    ChannelPipeline pipeline = this.channel.pipeline();
++                    if (pipeline.get("native-compress") != null) {
++                        pipeline.remove("native-compress");
++                    }
++                    if (pipeline.get("native-decompress") != null) {
++                        pipeline.remove("native-decompress");
++                    }
++                }
++                this.channel.pipeline().fireUserEventTriggered(io.papermc.paper.network.ConnectionEvent.COMPRESSION_THRESHOLD_SET);
++                return;
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to initialize Lattice native compression, falling back to vanilla", t);
++            }
++        }
++        
++        // Fallback to vanilla compression
++        if (threshold >= 0) {
++            if (this.channel.pipeline().get("decompress") instanceof CompressionDecoder compressionDecoder) {
++                compressionDecoder.setThreshold(threshold, validateDecompressed);
++            } else {
++                this.channel.pipeline().addAfter("splitter", "decompress", new CompressionDecoder(threshold, validateDecompressed));
++            }
++
++            if (this.channel.pipeline().get("compress") instanceof CompressionEncoder compressionEncoder) {
++                compressionEncoder.setThreshold(threshold);
++            } else {
++                this.channel.pipeline().addAfter("prepender", "compress", new CompressionEncoder(threshold));
++            }
++            this.channel.pipeline().fireUserEventTriggered(io.papermc.paper.network.ConnectionEvent.COMPRESSION_THRESHOLD_SET);
++        } else {
++            if (this.channel.pipeline().get("decompress") instanceof CompressionDecoder) {
++                this.channel.pipeline().remove("decompress");
++            }
++
++            if (this.channel.pipeline().get("compress") instanceof CompressionEncoder) {
++                this.channel.pipeline().remove("compress");
++            }
++            this.channel.pipeline().fireUserEventTriggered(io.papermc.paper.network.ConnectionEvent.COMPRESSION_DISABLED);
++        }
++    }
++    // Lattice end
++
+     public void setupCompression(int threshold, boolean validateDecompressed) {
+         if (threshold >= 0) {
+             // Paper - Use Velocity cipher
+diff --git a/net/minecraft/world/level/lighting/LevelLightEngine.java b/net/minecraft/world/level/lighting/LevelLightEngine.java
+index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000000 100644
+--- a/net/minecraft/world/level/lighting/LevelLightEngine.java
++++ b/net/minecraft/world/level/lighting/LevelLightEngine.java
+@@ -1,3 +1,5 @@
++// Lattice optimized light engine
++
+ package net.minecraft.world.level.lighting;
+ 
+ import net.minecraft.core.BlockPos;
+@@ -10,6 +12,13 @@ public class LevelLightEngine extends LayerLightEngine {
+     private static final Logger LOGGER = LoggerFactory.getLogger(LevelLightEngine.class);
+     
+     // Lattice native light engine
++    private io.lattice.world.LightOptimizedWorld lightOptimizedWorld;
++    private net.minecraft.world.level.Level level;
++    
++    public LevelLightEngine(net.minecraft.world.level.chunk.LightChunkGetter chunkGetter, boolean hasBlockLight, boolean hasSkyLight) {
++        super(chunkGetter, hasBlockLight, hasSkyLight);
++        
++        // Initialize Lattice native light engine if enabled
+         if (io.lattice.config.LatticeConfig.isLightUpdateOptimizationEnabled()) {
+             try {
+                 // We'll set the world later when it's available
+@@ -35,6 +44,10 @@ public class LevelLightEngine extends LayerLightEngine {
+     }
+     
+     public void setLevel(net.minecraft.world.level.Level level) {
++        this.level = level;
++        if (this.lightOptimizedWorld != null) {
++            this.lightOptimizedWorld = new io.lattice.world.LightOptimizedWorld(level);
++        }
+     }
+     
+     // Override light update methods to use native implementation if enabled
+@@ -45,6 +58,16 @@ public class LevelLightEngine extends LayerLightEngine {
+             try {
+                 // Combine sky light and block light
+                 int skyLight = lightOptimizedWorld.getLightLevel(pos, true);
+                 int blockLight = lightOptimizedWorld.getLightLevel(pos, false);
+                 return Math.max(skyLight, blockLight);
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to get light value from Lattice native light engine, falling back to vanilla", t);
++                this.lightOptimizedWorld = null; // Disable optimization to prevent further errors
+             }
+         }
+         return super.getLightValue(pos);
+@@ -60,6 +83,13 @@ public class LevelLightEngine extends LayerLightEngine {
+             try {
+                 // Handle light updates using native implementation
+                 lightOptimizedWorld.updateLight(pos);
++                return;
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to update light using Lattice native light engine, falling back to vanilla", t);
++                this.lightOptimizedWorld = null; // Disable optimization to prevent further errors
+             }
+         }
+         super.checkBlock(pos);
+@@ -75,6 +105,13 @@ public class LevelLightEngine extends LayerLightEngine {
+             try {
+                 // Handle light updates using native implementation
+                 lightOptimizedWorld.onBlockEmissionIncrease(pos, emissionLevel);
++                return;
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to update light emission using Lattice native light engine, falling back to vanilla", t);
++                this.lightOptimizedWorld = null; // Disable optimization to prevent further errors
+             }
+         }
+         super.onBlockEmissionIncrease(pos, emissionLevel);
+diff --git a/net/minecraft/world/level/chunk/storage/ChunkSerializer.java b/net/minecraft/world/level/chunk/storage/ChunkSerializer.java
+index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000000 100644
+--- a/net/minecraft/world/level/chunk/storage/ChunkSerializer.java
++++ b/net/minecraft/world/level/chunk/storage/ChunkSerializer.java
+@@ -1,3 +1,5 @@
++// Lattice optimized chunk serializer
++
+ package net.minecraft.world.level.chunk.storage;
+ 
+ import net.minecraft.nbt.CompoundTag;
+@@ -10,6 +12,10 @@ public class ChunkSerializer {
+     
+     // Lattice optimized chunk serializer
+     private static final io.lattice.chunk.OptimizedChunkSerializer optimizedSerializer = 
++        io.lattice.config.LatticeConfig.isChunkSerializationOptimizationEnabled() ? new io.lattice.chunk.OptimizedChunkSerializer() : null;
++    
++    public static CompoundTag write(net.minecraft.server.level.ServerLevel level, net.minecraft.world.level.chunk.LevelChunk chunk) {
++        if (optimizedSerializer != null) {
+             try {
+                 // Use Lattice optimized serialization
+                 return optimizedSerializer.serialize(chunk);
+@@ -25,6 +31,16 @@ public class ChunkSerializer {
+         
+         // Vanilla implementation
+         return net.minecraft.world.level.chunk.storage.SerializableChunkData.copyOf(level, chunk).write();
++    }
++    
++    public static net.minecraft.world.level.chunk.LevelChunk read(net.minecraft.server.level.ServerLevel level, net.minecraft.world.level.ChunkPos pos, CompoundTag tag) {
++        if (optimizedSerializer != null) {
++            try {
++                // Use Lattice optimized deserialization
++                // This would require implementing the read method in OptimizedChunkSerializer
++                // For now, we'll fall back to vanilla
++            } catch (Throwable t) {
++                // Fallback to vanilla if optimization fails
++                LOGGER.warn("Failed to use Lattice optimized chunk deserialization, falling back to vanilla", t);
++            }
++        }
++        
++        // Vanilla implementation
++        net.minecraft.world.level.chunk.storage.SerializableChunkData data = net.minecraft.world.level.chunk.storage.SerializableChunkData.parse(level, level.registryAccess(), tag);
++        if (data != null) {
++            return (net.minecraft.world.level.chunk.LevelChunk) data.create(level, level.getChunkSource().getGenerator());
++        }
++        return null;
+     }

@@ -1,0 +1,160 @@
+name: Build Native Libraries
+on:
+  push:
+    branches:
+      - main
+      - dev/**
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+  workflow_dispatch:
+
+jobs:
+  build-native:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-20.04
+            os-name: linux
+            arch: amd64
+            cmake-arch: x86_64
+          - os: ubuntu-20.04
+            os-name: linux
+            arch: aarch64
+            cmake-arch: arm64
+          - os: windows-2019
+            os-name: windows
+            arch: amd64
+            cmake-arch: x64
+          - os: macos-11
+            os-name: macos
+            arch: amd64
+            cmake-arch: x86_64
+          - os: macos-11
+            os-name: macos
+            arch: aarch64
+            cmake-arch: arm64
+
+    runs-on: ${{ matrix.os }}
+    name: Build Native Library (${{ matrix.os-name }}-${{ matrix.arch }})
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: 'zulu'
+
+      - name: Install build dependencies (Linux)
+        if: matrix.os-name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential gcc g++
+
+      - name: Install build dependencies (Windows)
+        if: matrix.os-name == 'windows'
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+          RefreshEnv.cmd
+
+      - name: Install build dependencies (macOS)
+        if: matrix.os-name == 'macos'
+        run: |
+          brew install cmake
+
+      - name: Set up cross-compilation for ARM64 on Linux
+        if: matrix.os-name == 'linux' && matrix.arch == 'aarch64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+
+      - name: Configure CMake
+        run: |
+          mkdir build-native
+          cd build-native
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_PROCESSOR=${{ matrix.cmake-arch }}
+
+      - name: Build native library
+        run: |
+          cd build-native
+          cmake --build . --config Release
+
+      - name: Rename library (Windows)
+        if: matrix.os-name == 'windows'
+        run: |
+          cd build-native
+          if (Test-Path "Release/lattice_native.dll") {
+            Rename-Item "Release/lattice_native.dll" "lattice_native-${{ matrix.arch }}-${{ matrix.os-name }}.dll"
+          } else {
+            Rename-Item "lattice_native.dll" "lattice_native-${{ matrix.arch }}-${{ matrix.os-name }}.dll"
+          }
+
+      - name: Rename library (Linux)
+        if: matrix.os-name == 'linux'
+        run: |
+          cd build-native
+          mv liblattice_native.so liblattice_native-${{ matrix.arch }}-${{ matrix.os-name }}.so
+
+      - name: Rename library (macOS)
+        if: matrix.os-name == 'macos'
+        run: |
+          cd build-native
+          mv liblattice_native.dylib liblattice_native-${{ matrix.arch }}-${{ matrix.os-name }}.dylib
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lattice_native-${{ matrix.arch }}-${{ matrix.os-name }}
+          path: |
+            build-native/lattice_native-${{ matrix.arch }}-${{ matrix.os-name }}.*
+            build-native/liblattice_native-${{ matrix.arch }}-${{ matrix.os-name }}.*
+
+  release-native:
+    needs: build-native
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/dev/'))
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: native-${{ github.sha }}
+          name: Native Libraries ${{ github.sha }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/*/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Pre-release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/heads/dev/')
+        with:
+          tag_name: native-${{ github.sha }}
+          name: Native Libraries ${{ github.sha }}
+          draft: false
+          prerelease: true
+          files: |
+            artifacts/*/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

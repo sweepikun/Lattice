@@ -1,13 +1,3 @@
-include(FetchContent)
-
-# Download and build spdlog
-FetchContent_Declare(
-    spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG        v1.12.0
-)
-FetchContent_MakeAvailable(spdlog)
-
 add_library(lattice_core STATIC
     threadpool.hpp
     task_scheduler.cpp
@@ -17,4 +7,7 @@ add_library(lattice_core STATIC
 )
 
 target_include_directories(lattice_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add spdlog for logging
+find_package(spdlog REQUIRED)
 target_link_libraries(lattice_core PUBLIC spdlog::spdlog)

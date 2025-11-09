@@ -262,47 +262,48 @@
 +    // Paper end - add proper async disconnect
      public void setupCompression(int threshold, boolean validateDecompressed) {
          if (threshold >= 0) {
+             // Paper - Use Velocity cipher
+             com.velocitypowered.natives.compression.VelocityCompressor compressor = com.velocitypowered.natives.util.Natives.compress.get().create(io.papermc.paper.configuration.GlobalConfiguration.get().misc.compressionLevel.or(-1));
              if (this.channel.pipeline().get("decompress") instanceof CompressionDecoder compressionDecoder) {
-@@ -585,6 +_,7 @@
+                 compressionDecoder.setThreshold(threshold, validateDecompressed);
+             } else {
+                 this.channel.pipeline().addAfter("splitter", "decompress", new CompressionDecoder(threshold, validateDecompressed));
+             }
+ 
+             if (this.channel.pipeline().get("compress") instanceof CompressionEncoder compressionEncoder) {
+                 compressionEncoder.setThreshold(threshold);
              } else {
                  this.channel.pipeline().addAfter("prepender", "compress", new CompressionEncoder(threshold));
              }
-+            this.channel.pipeline().fireUserEventTriggered(io.papermc.paper.network.ConnectionEvent.COMPRESSION_THRESHOLD_SET); // Paper - Add Channel initialization listeners
          } else {
              if (this.channel.pipeline().get("decompress") instanceof CompressionDecoder) {
                  this.channel.pipeline().remove("decompress");
-@@ -593,6 +_,7 @@
+             }
+ 
              if (this.channel.pipeline().get("compress") instanceof CompressionEncoder) {
                  this.channel.pipeline().remove("compress");
              }
-+            this.channel.pipeline().fireUserEventTriggered(io.papermc.paper.network.ConnectionEvent.COMPRESSION_DISABLED); // Paper - Add Channel initialization listeners
          }
      }
  
-@@ -610,6 +_,26 @@
-                     );
-                     packetListener1.onDisconnect(disconnectionDetails);
-                 }
-+                this.pendingActions.clear(); // Free up packet queue.
-+                // Paper start - Add PlayerConnectionCloseEvent
-+                if (packetListener instanceof net.minecraft.server.network.ServerCommonPacketListenerImpl commonPacketListener) {
-+                    /* Player was logged in, either game listener or configuration listener */
-+                    final com.mojang.authlib.GameProfile profile = commonPacketListener.getOwner();
-+                    new com.destroystokyo.paper.event.player.PlayerConnectionCloseEvent(profile.getId(),
-+                        profile.getName(), ((InetSocketAddress) this.address).getAddress(), false).callEvent();
-+                } else if (packetListener instanceof net.minecraft.server.network.ServerLoginPacketListenerImpl loginListener) {
-+                    /* Player is login stage */
-+                    switch (loginListener.state) {
-+                        case VERIFYING:
-+                        case WAITING_FOR_DUPE_DISCONNECT:
-+                        case PROTOCOL_SWITCHING:
-+                        case ACCEPTED:
-+                            final com.mojang.authlib.GameProfile profile = loginListener.authenticatedProfile; /* Should be non-null at this stage */
-+                            new com.destroystokyo.paper.event.player.PlayerConnectionCloseEvent(profile.getId(), profile.getName(),
-+                                ((InetSocketAddress) this.address).getAddress(), false).callEvent();
-+                    }
-+                }
-+                // Paper end - Add PlayerConnectionCloseEvent
-             }
-         }
+@@ -817,6 +_,15 @@
+     }
+ 
++    public void setCompressionLevel(int level) {
++        try {
++            // Try to use Lattice native compression level if enabled
++            if (io.lattice.config.LatticeConfig.isPacketCompressionOptimizationEnabled()) {
++                io.lattice.network.compression.NativeCompressionManager.setCompressionLevel(level);
++                return;
++            }
++        } catch (Throwable t) {
++            LOGGER.warn("Failed to update Lattice native compression level, falling back to vanilla", t);
++        }
++        
++        // Fallback to vanilla compression level setting
++        // Currently no-op as vanilla compression level is set in constructor
++    }
++    
+     static {
+         atExitHook = false;
      }

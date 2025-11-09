@@ -1,0 +1,94 @@
+--- /dev/null
++++ b/net/minecraft/world/level/lighting/LevelLightEngine.java
+@@ -0,0 +1,100 @@
++package net.minecraft.world.level.lighting;
++
++import io.lattice.config.LatticeConfig;
++import io.lattice.world.LightOptimizedWorld;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.level.chunk.LightChunkGetter;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++public class LevelLightEngine extends LayerLightEngine {
++    private static final Logger LOGGER = LoggerFactory.getLogger(LevelLightEngine.class);
++    
++    // Lattice native light engine
++    private LightOptimizedWorld lightOptimizedWorld;
++    private Level level;
++    
++    public LevelLightEngine(LightChunkGetter chunkGetter, boolean hasBlockLight, boolean hasSkyLight) {
++        super(chunkGetter, hasBlockLight, hasSkyLight);
++        
++        // Initialize Lattice native light engine if enabled
++        if (LatticeConfig.isLightUpdateOptimizationEnabled()) {
++            try {
++                // We'll set the world later when it's available
++                this.lightOptimizedWorld = new LightOptimizedWorld(null);
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to initialize Lattice native light engine, falling back to vanilla", t);
++                this.lightOptimizedWorld = null;
++            }
++        }
++    }
++    
++    public void setLevel(Level level) {
++        this.level = level;
++        if (this.lightOptimizedWorld != null) {
++            try {
++                this.lightOptimizedWorld = new LightOptimizedWorld(level);
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to initialize Lattice native light engine with level, falling back to vanilla", t);
++                this.lightOptimizedWorld = null;
++            }
++        }
++    }
++    
++    // Override light update methods to use native implementation if enabled
++    @Override
++    public int getLightValue(BlockPos pos) {
++        if (lightOptimizedWorld != null && level != null) {
++            try {
++                // Combine sky light and block light
++                int skyLight = lightOptimizedWorld.getLightLevel(pos, true);
++                int blockLight = lightOptimizedWorld.getLightLevel(pos, false);
++                return Math.max(skyLight, blockLight);
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to get light value from Lattice native light engine, falling back to vanilla", t);
++                this.lightOptimizedWorld = null; // Disable optimization to prevent further errors
++            }
++        }
++        return super.getLightValue(pos);
++    }
++    
++    @Override
++    public void checkBlock(BlockPos pos) {
++        if (lightOptimizedWorld != null && level != null) {
++            try {
++                // Handle light updates using native implementation
++                lightOptimizedWorld.updateLight(pos);
++                return;
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to update light using Lattice native light engine, falling back to vanilla", t);
++                this.lightOptimizedWorld = null; // Disable optimization to prevent further errors
++            }
++        }
++        super.checkBlock(pos);
++    }
++    
++    @Override
++    public void onBlockEmissionIncrease(BlockPos pos, int emissionLevel) {
++        if (lightOptimizedWorld != null && level != null) {
++            try {
++                // Handle light updates using native implementation
++                lightOptimizedWorld.onBlockEmissionIncrease(pos, emissionLevel);
++                return;
++            } catch (Throwable t) {
++                LOGGER.warn("Failed to update light emission using Lattice native light engine, falling back to vanilla", t);
++                this.lightOptimizedWorld = null; // Disable optimization to prevent further errors
++            }
++        }
++        super.onBlockEmissionIncrease(pos, emissionLevel);
++    }
++}

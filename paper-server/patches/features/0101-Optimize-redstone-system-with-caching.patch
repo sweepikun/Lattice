@@ -1,0 +1,216 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice Team <lattice@example.com>
+Date: Thu, 1 Jan 2025 00:00:00 +0000
+Subject: [PATCH] Optimize redstone system with caching and advanced algorithms
+
+Implements more advanced caching mechanisms and algorithms for redstone system:
+1. Adds caching layer for redstone power calculations
+2. Implements more efficient algorithms for redstone network updates
+3. Reduces redundant calculations and block updates
+4. Integrates native optimizations for improved performance
+
+diff --git a/net/minecraft/world/level/block/RedStoneWireBlock.java b/net/minecraft/world/level/block/RedStoneWireBlock.java
+index 0000000000000000000000000000000000000000..0000000000000000000000000000000000000000 100644
+--- a/net/minecraft/world/level/block/RedStoneWireBlock.java
++++ b/net/minecraft/world/level/block/RedStoneWireBlock.java
+@@ -1,3 +1,5 @@
++// Lattice - Advanced Redstone Optimization
++
+ package net.minecraft.world.level.block;
+ 
+ import com.google.common.collect.ImmutableMap;
+@@ -50,6 +52,16 @@ public class RedStoneWireBlock extends Block {
+     private final Map<BlockState, VoxelShape> shapeByState;
+     private static final int PRESSURE_PLATE_PARTICLES = 10;
+ 
++    // Lattice start - redstone caching system
++    private final it.unimi.dsi.fastutil.longs.Long2IntMap powerCache = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
++    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<net.minecraft.world.level.block.state.BlockState> stateCache = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
++    private final java.util.concurrent.atomic.AtomicLong cacheHits = new java.util.concurrent.atomic.AtomicLong();
++    private final java.util.concurrent.atomic.AtomicLong cacheMisses = new java.util.concurrent.atomic.AtomicLong();
++    private final io.lattice.redstone.RedstoneOptimizationManager optimizationManager = new io.lattice.redstone.RedstoneOptimizationManager();
++    private final java.util.concurrent.atomic.AtomicLong networkUpdates = new java.util.concurrent.atomic.AtomicLong();
++    private final java.util.concurrent.atomic.AtomicLong cacheInvalidations = new java.util.concurrent.atomic.AtomicLong();
++    // Lattice end
++
+     public RedStoneWireBlock(BlockBehaviour.Properties properties) {
+         super(properties);
+         this.registerDefaultState(this.stateDefinition.any().setValue(POWER, Integer.valueOf(0)));
+@@ -265,6 +277,34 @@ public class RedStoneWireBlock extends Block {
+         return state.isFaceSturdy(level, pos, Direction.UP) || state.is(Blocks.HOPPER);
+     }
+ 
++    // Lattice start - redstone caching system
++    private void invalidateCache(net.minecraft.core.BlockPos pos) {
++        long key = pos.asLong();
++        powerCache.remove(key);
++        stateCache.remove(key);
++        cacheInvalidations.incrementAndGet();
++        io.lattice.redstone.RedstonePerformanceMonitor.recordNetworkInvalidation();
++    }
++    
++    private void invalidateNeighborCaches(net.minecraft.core.BlockPos pos) {
++        // 使自身缓存失效
++        invalidateCache(pos);
++        
++        // 使邻居的缓存失效
++        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
++            invalidateCache(pos.relative(dir));
++        }
++    }
++    
++    private int getCachedPower(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
++        long key = pos.asLong();
++        if (powerCache.containsKey(key)) {
++            cacheHits.incrementAndGet();
++            io.lattice.redstone.RedstonePerformanceMonitor.recordCacheHit();
++            return powerCache.get(key);
++        } else {
++            cacheMisses.incrementAndGet();
++            io.lattice.redstone.RedstonePerformanceMonitor.recordCacheMiss();
++            int power = level.getBestNeighborSignal(pos);
++            powerCache.put(key, power);
++            return power;
++        }
++    }
++    // Lattice end
++
+     // Paper start - Optimize redstone (Eigencraft)
+     // The bulk of the new functionality is found in RedstoneWireTurbo.java
+     io.papermc.paper.redstone.RedstoneWireTurbo turbo = new io.papermc.paper.redstone.RedstoneWireTurbo(this);
+@@ -300,6 +340,22 @@ public class RedStoneWireBlock extends Block {
+     protected void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean isMoving) {
+         if (!oldState.is(state.getBlock()) && !level.isClientSide) {
+             // Paper start - optimize redstone - replace call to updatePowerStrength
++            // Lattice start - invalidate caches when placing redstone
++            if (level.paperConfig().misc.redstoneImplementation != io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.VANILLA) {
++                invalidateCache(pos);
++                invalidateNeighborCaches(pos);
++                level.getWireHandler().invalidateNetwork(pos); // Alternate Current
++                
++                // 如果启用了原生优化，使原生缓存失效
++                if (io.lattice.redstone.NativeRedstoneOptimizer.isNativeOptimizationAvailable()) {
++                    io.lattice.redstone.NativeRedstoneOptimizer.invalidateNetworkCache(
++                        pos.getX(), pos.getY(), pos.getZ());
++                }
++            }
++            // Lattice end
++            
+             if (level.paperConfig().misc.redstoneImplementation == io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.ALTERNATE_CURRENT) {
+                 level.getWireHandler().onWireAdded(pos, state); // Alternate Current
+             } else {
+@@ -325,6 +381,22 @@ public class RedStoneWireBlock extends Block {
+                 level.updateNeighborsAt(pos.relative(direction), this);
+             }
+ 
++            // Lattice start - invalidate caches when removing redstone
++            if (level.paperConfig().misc.redstoneImplementation != io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.VANILLA) {
++                invalidateCache(pos);
++                invalidateNeighborCaches(pos);
++                level.getWireHandler().invalidateNetwork(pos); // Alternate Current
++                
++                // 如果启用了原生优化，使原生缓存失效
++                if (io.lattice.redstone.NativeRedstoneOptimizer.isNativeOptimizationAvailable()) {
++                    io.lattice.redstone.NativeRedstoneOptimizer.invalidateNetworkCache(
++                        pos.getX(), pos.getY(), pos.getZ());
++                }
++            }
++            // Lattice end
++            
+             // Paper start - optimize redstone - replace call to updatePowerStrength
+             if (level.paperConfig().misc.redstoneImplementation == io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.ALTERNATE_CURRENT) {
+                 level.getWireHandler().onWireRemoved(pos, state); // Alternate Current
+@@ -344,6 +416,22 @@ public class RedStoneWireBlock extends Block {
+     protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock, @Nullable Orientation orientation, boolean movedByPiston) {
+         if (!level.isClientSide) {
+             // Paper start - optimize redstone (Alternate Current)
++            // Lattice start - invalidate caches on neighbor change
++            if (level.paperConfig().misc.redstoneImplementation != io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.VANILLA) {
++                invalidateCache(pos);
++                invalidateNeighborCaches(pos);
++                level.getWireHandler().invalidateNetwork(pos); // Alternate Current
++                
++                // 如果启用了原生优化，使原生缓存失效
++                if (io.lattice.redstone.NativeRedstoneOptimizer.isNativeOptimizationAvailable()) {
++                    io.lattice.redstone.NativeRedstoneOptimizer.invalidateNetworkCache(
++                        pos.getX(), pos.getY(), pos.getZ());
++                }
++            }
++            // Lattice end
++            
+             // Alternate Current handles breaking of redstone wires in the WireHandler.
+             if (level.paperConfig().misc.redstoneImplementation == io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.ALTERNATE_CURRENT) {
+                 level.getWireHandler().onWireUpdated(pos, state, orientation);
+@@ -372,6 +460,22 @@ public class RedStoneWireBlock extends Block {
+         }
+     }
+ 
++    // Lattice start - optimized power calculation with caching
++    public int getCachedPower(Level level, BlockPos pos) {
++        // 首先尝试使用原生优化
++        if (io.lattice.redstone.NativeRedstoneOptimizer.isNativeOptimizationAvailable()) {
++            io.lattice.redstone.RedstonePerformanceMonitor.recordNativeCall();
++            try {
++                int power = io.lattice.redstone.NativeRedstoneOptimizer.getRedstonePower(
++                    pos.getX(), pos.getY(), pos.getZ());
++                io.lattice.redstone.RedstonePerformanceMonitor.recordNativeCallSuccess();
++                return power;
++            } catch (Exception e) {
++                io.lattice.redstone.RedstonePerformanceMonitor.recordNativeCallFailure();
++            }
++        }
++        
++        // 回退到Java实现
++        long key = pos.asLong();
++        if (powerCache.containsKey(key)) {
++            cacheHits.incrementAndGet();
++            io.lattice.redstone.RedstonePerformanceMonitor.recordCacheHit();
++            return powerCache.get(key);
++        } else {
++            cacheMisses.incrementAndGet();
++            io.lattice.redstone.RedstonePerformanceMonitor.recordCacheMiss();
++            int power = level.getBestNeighborSignal(pos);
++            powerCache.put(key, power);
++            return power;
++        }
++    }
++    // Lattice end
++
+     // Paper start - Optimize redstone
+     // The bulk of the new functionality is found in RedstoneWireTurbo.java
+     /*
+@@ -385,6 +499,28 @@ public class RedStoneWireBlock extends Block {
+      * Note: Added 'source' argument so as to help determine direction of information flow
+      */
+     private void updateSurroundingRedstone(Level worldIn, BlockPos pos, BlockState state, @Nullable Orientation orientation, boolean blockAdded) {
++        // Lattice start - advanced caching for redstone updates
++        if (worldIn.paperConfig().misc.redstoneImplementation != io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.VANILLA) {
++            long key = pos.asLong();
++            if (stateCache.containsKey(key)) {
++                BlockState cachedState = stateCache.get(key);
++                if (cachedState != null && cachedState.equals(state)) {
++                    // Skip update if state hasn't changed
++                    return;
++                }
++            }
++            stateCache.put(key, state);
++            networkUpdates.incrementAndGet();
++            io.lattice.redstone.RedstonePerformanceMonitor.recordRedstoneUpdate();
++            
++            // 尝试使用原生优化计算功率
++            if (io.lattice.redstone.NativeRedstoneOptimizer.isNativeOptimizationAvailable()) {
++                int nativePower = optimizationManager.getRedstonePowerNative(
++                    pos.getX(), pos.getY(), pos.getZ());
++                if (nativePower >= 0) {
++                    // 使用原生优化结果
++                    state = state.setValue(POWER, nativePower);
++                    worldIn.setBlock(pos, state, Block.UPDATE_CLIENTS);
++                    return;
++                }
++            }
++        }
++        // Lattice end
++        
+         if (worldIn.paperConfig().misc.redstoneImplementation == io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.EIGENCRAFT) {
+             // since 24w33a the source pos is no longer given, but instead an Orientation parameter
+             // when this is not null, it can be used to find the source pos, which the turbo uses

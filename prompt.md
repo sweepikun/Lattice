@@ -119,4 +119,8 @@ lattice/                                 # Lattice 服务端核心 (fork 自 Pap
 │   └── upstream_sync.md                        # 如何与 Paper / Mojang 同步
 │
 └── CMakeLists.txt                              # 顶层构建入口
-'''
+'''在 C++ 实现中加入错误检查（ZSTD_isError / libdeflate 返回码）与参数边界校验（必做）。
+在 JNI 层实现 DirectByteBuffer API（零拷贝）并在 Java Handler 里改用 direct ByteBuf（显著减少拷贝）。
+改用 thread_local 或上下文池管理 ZSTD_CCtx/Dctx（解决线程安全与复用）。
+在 Java 静态初始化中实现 native 加载回退逻辑并在 pipeline 初始化时优雅回退到 Java 压缩。
+在 CMake 中补足跨平台查找/构建逻辑并提供 Windows（MinGW/ MSYS2/ MSVC）的构建指导与条件分支。
