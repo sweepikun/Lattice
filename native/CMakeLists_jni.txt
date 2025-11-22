@@ -1,0 +1,146 @@
+cmake_minimum_required(VERSION 3.16)
+project(LatticeJNI VERSION 1.0.0 LANGUAGES CXX)
+
+# 设置C++标准
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 查找必要的包
+find_package(Threads REQUIRED)
+find_package(PkgConfig QUIET)
+
+# SQLite3
+find_package(SQLite3 QUIET)
+if(NOT SQLite3_FOUND)
+    # 手动设置SQLite3
+    set(SQLITE3_INCLUDE_DIRS /usr/include)
+    set(SQLITE3_LIBRARIES sqlite3)
+endif()
+
+# nlohmann_json
+if(EXISTS ${CMAKE_SOURCE_DIR}/_deps/nlohmann_json-src/single_include/nlohmann/json.hpp)
+    set(NLOHMANN_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/_deps/nlohmann_json-src/single_include)
+else()
+    message(FATAL_ERROR "nlohmann/json not found")
+endif()
+
+# JNI设置
+if(NOT DEFINED JAVA_HOME)
+    # 自动检测JAVA_HOME
+    find_program(JAVA javac)
+    if(JAVA)
+        get_filename_component(JAVA_BIN_DIR ${JAVA} DIRECTORY)
+        get_filename_component(JAVA_HOME ${JAVA_BIN_DIR} DIRECTORY)
+        get_filename_component(JAVA_HOME ${JAVA_HOME} DIRECTORY)
+    endif()
+endif()
+
+if(JAVA_HOME)
+    set(JNI_INCLUDE_DIRS 
+        ${JAVA_HOME}/include
+        ${JAVA_HOME}/include/linux
+    )
+    set(JNI_LIBRARIES 
+        ${JAVA_HOME}/lib/server/libjvm.so
+        -lpthread -ldl
+    )
+    message(STATUS "JAVA_HOME: ${JAVA_HOME}")
+else()
+    message(FATAL_ERROR "JAVA_HOME not found")
+endif()
+
+# 平台特定设置
+if(UNIX AND NOT APPLE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+    find_library(URING_LIB NAMES uring liburing)
+    if(URING_LIB)
+        message(STATUS "Found liburing: ${URING_LIB}")
+        set(URING_FOUND TRUE)
+    endif()
+elseif(WIN32)
+    set(JNI_LIBRARIES ${JNI_LIBRARIES} ws2_32 kernel32)
+elseif(APPLE)
+    set(JNI_LIBRARIES ${JNI_LIBRARIES} "-framework Foundation" "-framework Security")
+endif()
+
+# SIMD优化
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma")
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    set(CMAKE_CXX_FLAGS "/O2 /arch:AVX2")
+endif()
+
+# 包含目录
+include_directories(
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/native
+    ${CMAKE_SOURCE_DIR}/native/jni
+    ${JNI_INCLUDE_DIRS}
+    ${NLOHMANN_INCLUDE_DIRS}
+)
+
+# 定义缓存系统
+add_library(lattice_cache_io STATIC
+    cache/hierarchical_cache_system.cpp
+    world/async_chunk_io.cpp
+    ai/adaptive_decision_engine.cpp
+)
+
+target_link_libraries(lattice_cache_io
+    ${SQLITE3_LIBRARIES}
+    Threads::Threads
+)
+
+if(URING_FOUND)
+    target_link_libraries(lattice_cache_io ${URING_LIB})
+endif()
+
+# 定义JNI桥接库
+add_library(lattice_native SHARED
+    jni/native_interface.cpp
+    jni/redstone/paper_compatible_redstone_jni.cpp
+    jni/cache/hierarchical_cache_jni.cpp
+    jni/world/async_chunk_io_jni.cpp
+    jni/ai/adaptive_decision_engine_jni.cpp
+    jni/jni_helper.hpp
+    jni/safe_memory_manager.hpp
+)
+
+target_link_libraries(lattice_native
+    lattice_cache_io
+    ${JNI_LIBRARIES}
+    ${SQLITE3_LIBRARIES}
+    Threads::Threads
+)
+
+# 平台特定库
+if(UNIX AND NOT APPLE)
+    target_link_libraries(lattice_native pthread dl)
+    if(URING_FOUND)
+        target_link_libraries(lattice_native ${URING_LIB})
+    endif()
+elseif(WIN32)
+    target_link_libraries(lattice_native ws2_32 kernel32)
+elseif(APPLE)
+    target_link_libraries(lattice_native "-framework Foundation" "-framework Security")
+endif()
+
+# 编译选项
+target_compile_features(lattice_native PRIVATE cxx_std_20)
+target_compile_definitions(lattice_native
+    PRIVATE
+    JNIEXPORT=__attribute__((visibility("default")))
+    JNIIMPORT=__attribute__((visibility("default")))
+)
+
+# 输出信息
+message(STATUS "Cache system: ENABLED")
+message(STATUS "Async Chunk I/O: ENABLED") 
+message(STATUS "Adaptive Decision Engine: ENABLED")
+message(STATUS "JNI Bridge: ENABLED")
+message(STATUS "SQLite3: ${SQLITE3_FOUND}")
+if(URING_FOUND)
+    message(STATUS "liburing: ENABLED")
+endif()
+message(STATUS "C++ Standard: 20")

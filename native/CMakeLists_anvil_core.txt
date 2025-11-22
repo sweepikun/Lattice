@@ -1,0 +1,44 @@
+cmake_minimum_required(VERSION 3.16)
+project(LatticeAnvilCore LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 查找zlib（用于Minecraft压缩）
+find_package(ZLIB REQUIRED)
+
+# 只编译Anvil格式核心文件
+add_library(lattice_anvil_core STATIC
+    io_types.hpp
+    anvil_format.cpp
+    anvil_format.hpp
+)
+
+# 链接zlib库
+target_link_libraries(lattice_anvil_core ZLIB::ZLIB)
+
+# 设置包含目录
+target_include_directories(lattice_anvil_core PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ZLIB_INCLUDE_DIRS}
+)
+
+# 添加编译器标志以支持现代C++特性
+target_compile_options(lattice_anvil_core PRIVATE 
+    -Wall -Wextra -O2
+    -std=c++20
+)
+
+# 启用C++20特性
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(lattice_anvil_core PRIVATE 
+        -pthread
+        -fno-exceptions
+    )
+endif()
+
+# 打印配置信息
+message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "ZLIB Found: ${ZLIB_FOUND}")
+message(STATUS "ZLIB Include: ${ZLIB_INCLUDE_DIRS}")
+message(STATUS "ZLIB Library: ${ZLIB_LIBRARIES}")
+message(STATUS "Anvil Core Library: lattice_anvil_core")

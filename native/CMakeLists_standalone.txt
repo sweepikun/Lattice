@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.16)
+project(StandaloneAnvilTest LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 查找zlib（用于Minecraft压缩）
+find_package(ZLIB REQUIRED)
+
+# 创建测试可执行文件
+add_executable(standalone_anvil_test standalone_anvil_test.cpp)
+
+# 链接zlib库
+target_link_libraries(standalone_anvil_test ZLIB::ZLIB)
+
+# 添加编译器标志
+target_compile_options(standalone_anvil_test PRIVATE 
+    -Wall -Wextra -O2
+    -std=c++20
+    -pthread
+)
+
+# 设置包含目录
+target_include_directories(standalone_anvil_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ZLIB_INCLUDE_DIRS}
+)
+
+# 打印配置信息
+message(STATUS "Standalone Anvil Test Build")
+message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "ZLIB Found: ${ZLIB_FOUND}")
+message(STATUS "ZLIB Library: ${ZLIB_LIBRARIES}")

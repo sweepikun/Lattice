@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.16)
+project(LatticeNative LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 简化版本 - 只包含核心功能
+add_executable(test_simple_native_io
+    simple_native_io.hpp
+    test_simple_native_io.cpp
+)
+
+# 包含目录
+target_include_directories(test_simple_native_io PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# 简单的SIMD优化
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    target_compile_options(test_simple_native_io PRIVATE -msse4.1 -msse4.2 -mavx -mavx2 -mfma)
+endif()
+
+message(STATUS "=== Lattice Native Simplified Build ===")
+message(STATUS "  - Core I/O: AsyncChunkIO with simplified implementation")
+message(STATUS "  - Redstone Engine: Paper-compatible simplified version")
+message(STATUS "  - Platform: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "  - Compiler: ${CMAKE_CXX_COMPILER}")

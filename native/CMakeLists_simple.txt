@@ -1,0 +1,114 @@
+cmake_minimum_required(VERSION 3.16)
+project(LatticeNative LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Detect platform
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(PLATFORM_LINUX ON)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(PLATFORM_MACOS ON)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(PLATFORM_WINDOWS ON)
+endif()
+
+# Find packages
+find_package(Threads REQUIRED)
+
+# Core Sources - 专注于核心C++代码，排除JNI和复杂的平台实现
+set(CORE_SOURCES
+    # Core I/O - 只包含基本实现
+    core/io/async_chunk_io.hpp
+    core/io/async_chunk_io.cpp
+    
+    # Core Redstone
+    core/redstone/redstone_engine.hpp
+    core/redstone/redstone_engine.cpp
+    core/redstone/redstone_optimizer.cpp
+    core/redstone/redstone_components.hpp
+    core/redstone/paper_compatible_redstone_engine.hpp
+    core/redstone/paper_compatible_redstone_engine.cpp
+    core/redstone/simple_redstone_engine.cpp
+    
+    # Core Net
+    core/net/memory_arena.cpp
+    core/net/compress_buffer_cache.cpp
+    core/net/entity_tracker.cpp
+    core/net/hierarchical_tracker.cpp
+    core/net/async_compressor.cpp
+    
+    # Core World
+    core/world/advanced_light_engine.cpp
+    core/world/light_updater.cpp
+    core/world/pathfinder.cpp
+    
+    # AI System - 只包含简单部分
+    entity/behavior_nodes.cpp
+)
+
+# Build the native library
+add_library(lattice_native SHARED ${CORE_SOURCES})
+
+# Include directories
+target_include_directories(lattice_native PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/io
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/redstone
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/net
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/world
+    ${CMAKE_CURRENT_SOURCE_DIR}/entity
+)
+
+# SIMD optimizations
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    target_compile_options(lattice_native PRIVATE -msse4.1 -msse4.2 -mavx -mavx2 -mfma)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64")
+    target_compile_options(lattice_native PRIVATE -mfpu=neon)
+endif()
+
+# Platform-specific settings
+if(PLATFORM_LINUX)
+    target_compile_definitions(lattice_native PRIVATE PLATFORM_LINUX)
+    # Check for liburing
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBURING liburing)
+        if(LIBURING_FOUND)
+            target_compile_definitions(lattice_native PRIVATE HAS_IO_URING=1)
+            target_include_directories(lattice_native PRIVATE ${LIBURING_INCLUDE_DIRS})
+            target_link_libraries(lattice_native PRIVATE ${LIBURING_LIBRARIES})
+        else()
+            target_compile_definitions(lattice_native PRIVATE NO_IO_URING=1)
+        endif()
+    else()
+        target_compile_definitions(lattice_native PRIVATE NO_IO_URING=1)
+    endif()
+elseif(PLATFORM_MACOS)
+    target_compile_definitions(lattice_native PRIVATE PLATFORM_MACOS)
+elseif(PLATFORM_WINDOWS)
+    target_compile_definitions(lattice_native PRIVATE PLATFORM_WINDOWS)
+endif()
+
+# Link libraries
+target_link_libraries(lattice_native PRIVATE Threads::Threads)
+
+# Simple test executable
+add_executable(test_native
+    test_simple_native.cpp
+)
+
+target_link_libraries(test_native PRIVATE lattice_native)
+
+# Set output directory
+set_target_properties(lattice_native PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+)
+
+message(STATUS "Lattice Native Build Summary:")
+message(STATUS "  - Platform: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "  - Core I/O: async_chunk_io with platform-specific backends")
+message(STATUS "  - Redstone Engine: Paper-compatible with native optimization")
+message(STATUS "  - Output: ${CMAKE_BINARY_DIR}/lib/liblattice_native.so")

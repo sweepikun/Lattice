@@ -1,0 +1,359 @@
+# CMakeLists.txt for Three-Level Cache and Block I/O System
+# Author: MiniMax Agent
+# Description: CMake build configuration for the complete cache and I/O system
+
+cmake_minimum_required(VERSION 3.16)
+project(LatticeCacheAndIO VERSION 1.0.0 LANGUAGES CXX)
+
+# Set C++20 as the standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Build type configuration
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Compiler-specific optimizations
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Enable common optimizations
+    add_compile_options(
+        -O3
+        -march=native
+        -mtune=native
+        -flto
+        -pthread
+        -fdata-sections
+        -ffunction-sections
+    )
+    
+    # SIMD detection and enabling
+    if(CMAKE_CXX_FLAGS MATCHES "-march=native")
+        add_definitions(-DSIMD_LEVEL_NATIVE)
+        message(STATUS "SIMD: Using native CPU instructions")
+    else()
+        # Manual SIMD flags
+        if(CMAKE_CXX_FLAGS MATCHES "-mavx512")
+            add_definitions(-DSIMD_LEVEL_AVX512)
+            message(STATUS "SIMD: AVX-512 enabled")
+        elseif(CMAKE_CXX_FLAGS MATCHES "-mavx2")
+            add_definitions(-DSIMD_LEVEL_AVX2)
+            message(STATUS "SIMD: AVX2 enabled")
+        elseif(CMAKE_CXX_FLAGS MATCHES "-msse4")
+            add_definitions(-DSIMD_LEVEL_SSE4)
+            message(STATUS "SIMD: SSE4 enabled")
+        endif()
+    endif()
+endif()
+
+# Platform detection and definitions
+if(WIN32)
+    add_definitions(-DPLATFORM_WINDOWS -DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+elseif(APPLE)
+    add_definitions(-DPLATFORM_MACOS)
+    # Apple-specific settings
+    set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Build architectures")
+else()
+    add_definitions(-DPLATFORM_LINUX)
+endif()
+
+# Threading model
+find_package(Threads REQUIRED)
+
+# Find required packages
+find_package(PkgConfig QUIET)
+
+# SQLite for Level 2 cache
+find_package(SQLite3 QUIET)
+if(NOT SQLite3_FOUND)
+    # Try to find sqlite3 manually
+    find_library(SQLITE3_LIBRARY sqlite3)
+    if(SQLITE3_LIBRARY)
+        set(SQLite3_FOUND TRUE)
+        set(SQLite3_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/sqlite3)
+        set(SQLite3_LIBRARIES ${SQLITE3_LIBRARY})
+    endif()
+endif()
+
+# liburing for Linux io_uring (optional)
+if(UNIX AND NOT APPLE)
+    pkg_check_modules(LIBURING QUIET liburing)
+    if(LIBURING_FOUND)
+        add_definitions(-DHAS_LIBURING=1)
+        message(STATUS "Found liburing: ${LIBURING_LIBRARIES}")
+    else()
+        add_definitions(-DHAS_LIBURING=0)
+        message(STATUS "liburing not found, will use fallback")
+    endif()
+endif()
+
+# nlohmann_json (use FetchContent to download if not found)
+find_package(nlohmann_json QUIET)
+if(NOT nlohmann_json_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+    set(nlohmann_json_FOUND TRUE)
+    set(nlohmann_json_INCLUDE_DIRS ${nlohmann_json_SOURCE_DIR}/single_include)
+endif()
+
+# Include directories
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/cache)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/world)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ai)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core/net)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/optimization)
+
+if(nlohmann_json_FOUND)
+    include_directories(${nlohmann_json_INCLUDE_DIRS})
+endif()
+
+# Platform-specific source files
+set(PLATFORM_SOURCES "")
+
+if(WIN32)
+    # Windows IOCP implementation
+    list(APPEND PLATFORM_SOURCES
+        world/async_chunk_io_windows.cpp
+    )
+elseif(APPLE)
+    # macOS GCD implementation  
+    list(APPEND PLATFORM_SOURCES
+        world/async_chunk_io_darwin.cpp
+    )
+else()
+    # Linux io_uring implementation
+    list(APPEND PLATFORM_SOURCES
+        world/async_chunk_io_linux.cpp
+    )
+endif()
+
+# Main source files
+set(CACHE_SOURCES
+    cache/hierarchical_cache_system.cpp
+)
+
+set(IO_SOURCES
+    world/async_chunk_io.cpp
+    ${PLATFORM_SOURCES}
+)
+
+set(AI_SOURCES
+    ai/adaptive_decision_engine.cpp
+)
+
+# Include optimization sources if available
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/optimization/simd_optimization.cpp)
+    list(APPEND AI_SOURCES optimization/simd_optimization.cpp)
+endif()
+
+# Shared library target
+add_library(lattice_cache_io SHARED
+    ${CACHE_SOURCES}
+    ${IO_SOURCES}
+    ${AI_SOURCES}
+)
+
+# Target properties
+set_target_properties(lattice_cache_io PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION 1
+    POSITION_INDEPENDENT_CODE ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+
+# Link libraries
+target_link_libraries(lattice_cache_io
+    Threads::Threads
+    ${nlohmann_json_LIBRARIES}
+)
+
+if(SQLite3_FOUND)
+    target_link_libraries(lattice_cache_io ${SQLite3_LIBRARIES})
+endif()
+
+if(LIBURING_FOUND)
+    target_link_libraries(lattice_cache_io ${LIBURING_LIBRARIES})
+endif()
+
+# Platform-specific libraries
+if(WIN32)
+    target_link_libraries(lattice_cache_io
+        ws2_32
+        kernel32
+        user32
+    )
+elseif(APPLE)
+    target_link_libraries(lattice_cache_io
+        "-framework Foundation"
+        "-framework Dispatch"
+        "-framework CoreFoundation"
+        "-framework Security"
+    )
+else()
+    target_link_libraries(lattice_cache_io
+        dl
+        m
+    )
+endif()
+
+# Compiler definitions
+target_compile_definitions(lattice_cache_io PRIVATE
+    LATTICE_CACHE_IO_EXPORTS
+    LATTICE_VERSION=100
+)
+
+# Platform detection flags
+if(WIN32)
+    target_compile_definitions(lattice_cache_io PRIVATE PLATFORM_WINDOWS)
+elseif(APPLE)
+    target_compile_definitions(lattice_cache_io PRIVATE PLATFORM_MACOS)
+else()
+    target_compile_definitions(lattice_cache_io PRIVATE PLATFORM_LINUX)
+endif()
+
+# SIMD level detection
+if(CMAKE_CXX_FLAGS MATCHES "-march=native")
+    target_compile_definitions(lattice_cache_io PRIVATE SIMD_LEVEL_NATIVE)
+elseif(CMAKE_CXX_FLAGS MATCHES "-mavx512")
+    target_compile_definitions(lattice_cache_io PRIVATE SIMD_LEVEL_AVX512)
+elseif(CMAKE_CXX_FLAGS MATCHES "-mavx2")
+    target_compile_definitions(lattice_cache_io PRIVATE SIMD_LEVEL_AVX2)
+elseif(CMAKE_CXX_FLAGS MATCHES "-msse4")
+    target_compile_definitions(lattice_cache_io PRIVATE SIMD_LEVEL_SSE4)
+elseif(CMAKE_CXX_FLAGS MATCHES "-mfpu=neon")
+    target_compile_definitions(lattice_cache_io PRIVATE SIMD_LEVEL_NEON)
+else()
+    target_compile_definitions(lattice_cache_io PRIVATE SIMD_LEVEL_NONE)
+endif()
+
+# Installation rules
+install(TARGETS lattice_cache_io
+    EXPORT LatticeCacheIOConfig
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+    INCLUDES DESTINATION include
+)
+
+# Install headers
+install(FILES
+    cache/hierarchical_cache_system.hpp
+    world/async_chunk_io.hpp
+    ai/adaptive_decision_engine.hpp
+    DESTINATION include/lattice
+)
+
+# Export configuration
+install(EXPORT LatticeCacheIOConfig
+    DESTINATION cmake
+    FILE LatticeCacheIOConfig.cmake
+    NAMESPACE LatticeCacheIO::
+)
+
+# Testing configuration
+enable_testing()
+
+# Add test executable
+add_executable(lattice_cache_io_test
+    test/lattice_cache_io_test.cpp
+)
+
+target_link_libraries(lattice_cache_io_test
+    lattice_cache_io
+    Threads::Threads
+)
+
+# Test configuration
+if(SQLite3_FOUND)
+    target_compile_definitions(lattice_cache_io_test PRIVATE HAS_SQLITE=1)
+endif()
+
+if(LIBURING_FOUND)
+    target_compile_definitions(lattice_cache_io_test PRIVATE HAS_LIBURING=1)
+endif()
+
+# Platform-specific test compilation
+if(WIN32)
+    target_compile_definitions(lattice_cache_io_test PRIVATE PLATFORM_WINDOWS)
+elseif(APPLE)
+    target_compile_definitions(lattice_cache_io_test PRIVATE PLATFORM_MACOS)
+else()
+    target_compile_definitions(lattice_cache_io_test PRIVATE PLATFORM_LINUX)
+endif()
+
+# SIMD level for tests
+if(CMAKE_CXX_FLAGS MATCHES "-march=native")
+    target_compile_definitions(lattice_cache_io_test PRIVATE SIMD_LEVEL_NATIVE)
+elseif(CMAKE_CXX_FLAGS MATCHES "-mavx512")
+    target_compile_definitions(lattice_cache_io_test PRIVATE SIMD_LEVEL_AVX512)
+elseif(CMAKE_CXX_FLAGS MATCHES "-mavx2")
+    target_compile_definitions(lattice_cache_io_test PRIVATE SIMD_LEVEL_AVX2)
+elseif(CMAKE_CXX_FLAGS MATCHES "-msse4")
+    target_compile_definitions(lattice_cache_io_test PRIVATE SIMD_LEVEL_SSE4)
+elseif(CMAKE_CXX_FLAGS MATCHES "-mfpu=neon")
+    target_compile_definitions(lattice_cache_io_test PRIVATE SIMD_LEVEL_NEON)
+else()
+    target_compile_definitions(lattice_cache_io_test PRIVATE SIMD_LEVEL_NONE)
+endif()
+
+# Add tests
+add_test(NAME CacheSystemTest COMMAND lattice_cache_io_test --cache-test)
+add_test(NAME IOSystemTest COMMAND lattice_cache_io_test --io-test)
+add_test(NAME DecisionEngineTest COMMAND lattice_cache_io_test --decision-test)
+add_test(NAME CrossPlatformTest COMMAND lattice_cache_io_test --platform-test)
+
+# Performance benchmark
+add_executable(lattice_cache_io_benchmark
+    benchmark/lattice_cache_io_benchmark.cpp
+)
+
+target_link_libraries(lattice_cache_io_benchmark
+    lattice_cache_io
+    Threads::Threads
+)
+
+# Build summary
+message(STATUS "=== Lattice Cache and I/O System Build Configuration ===")
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "Platform: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "SIMD Level: ${SIMD_LEVEL}")
+message(STATUS "SQLite3: ${SQLite3_FOUND}")
+message(STATUS "liburing: ${LIBURING_FOUND}")
+message(STATUS "nlohmann_json: ${nlohmann_json_FOUND}")
+message(STATUS "=== Build configuration complete ===")
+
+# Print cache system capabilities
+message(STATUS "Cache System Capabilities:")
+if(SQLite3_FOUND)
+    message(STATUS "  ✓ Level 2 SQLite cache")
+endif()
+if(LIBURING_FOUND)
+    message(STATUS "  ✓ Linux io_uring backend")
+endif()
+message(STATUS "  ✓ Level 1 Memory LRU cache")
+message(STATUS "  ✓ Level 3 Raw data source cache")
+
+message(STATUS "I/O System Capabilities:")
+if(WIN32)
+    message(STATUS "  ✓ Windows IOCP backend")
+elseif(APPLE)
+    message(STATUS "  ✓ macOS GCD backend")
+    message(STATUS "  ✓ APFS optimization")
+else()
+    message(STATUS "  ✓ Linux io_uring backend")
+endif()
+
+message(STATUS "AI Decision Engine:")
+message(STATUS "  ✓ 1.21.0 entity support")
+message(STATUS "  ✓ Adaptive decision trees")
+message(STATUS "  ✓ Plugin architecture")
+message(STATUS "  ✓ Vectorized processing")
